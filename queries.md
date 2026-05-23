@@ -6,28 +6,32 @@ I would build a clear, staged pipeline: ingest documents (PDF/DOCX/HTML/TXT), no
 
 ## What you'd use for chunking and why
 
-I use `RecursiveCharacterTextSplitter` with 500-700 token chunks and 100-150 token overlap. That size is large enough to preserve context, but small enough to remain focused on a single idea. Overlap is important because enterprise policies often span multiple sentences; without overlap you lose meaning across boundaries and citations become brittle.
+I'd use `recursive character splitting` with a chunk size of 512 tokens and 50-100 token overlap. The reason is simple — fixed-size splitting is predictable and works well across mixed formats (PDF, Word, Confluence). Semantic chunking sounds better on paper but it's slower, harder to debug, and inconsistent across document types. The overlap ensures context doesn't get cut off at chunk boundaries, which matters when a sentence spans two chunks.
+
+For PDFs specifically, I'd extract text page by page first, then chunk — not dump the whole PDF into one string and split blindly, because page breaks often carry structural meaning.
 
 ## Embedding model choice
 
-I start with `sentence-transformers/all-MiniLM-L6-v2` because it is fast, reliable, and cheap to run at scale. If recall and semantic coverage become a concern, I move to `BAAI/bge-large-en-v1.5` for stronger semantic fidelity. The tradeoff is higher memory use and slower embedding latency, so I only upgrade once the baseline shows limits.
+`sentence-transformers/all-MiniLM-L6-v2` for cost-sensitive or self-hosted setups, or `text-embedding-3-small` from OpenAI if API budget allows. Both handle semantic similarity well. I'd avoid using a general-purpose model like ada-002 for domain-specific internal docs — fine-tuning or at least evaluating retrieval quality on a sample set matters here.
 
 ## Vector store choice
 
-Qdrant is a good fit because it is fast, production-ready, supports metadata filtering, and has a clean API for both upserts and hybrid retrieval workflows. It scales well and works locally during development without changing code.
+Qdrant. It supports hybrid search natively (dense + sparse/BM25 in one query), has good filtering on metadata, and is easy to self-host with Docker. For 10,000 documents that's a manageable scale — no need for something like Weaviate or Pinecone unless you're scaling to millions.
 
 ## Retrieval strategy
 
-I use hybrid retrieval: dense vector search for semantic relevance and BM25 for exact keywords, identifiers, and acronyms. The merged results are reranked with a cross-encoder to tighten precision. This combination consistently beats vector-only retrieval on policy and compliance content where exact terms matter.
+Hybrid retrieval — dense vector search combined with BM25 keyword search, scores merged via Reciprocal Rank Fusion. Dense handles semantic queries, BM25 handles exact terminology (product names, policy codes, IDs). Using only dense search fails on queries like "what is policy HR-204" where keyword matching is more reliable.
+
+After retrieval, run a cross-encoder reranker on top 15 results and pass the top 5 to the LLM. The reranker is slower but significantly improves precision — it reads query and chunk together rather than comparing embeddings independently.
 
 ## How you'd handle documents that answer the question only partially
 
-I retrieve more than I need (top 15), rerank, and then assemble the best 5 for the LLM. That gives the model enough evidence to merge partial answers from multiple documents while still keeping a tight context window. I also keep citations tied to each chunk so the final response is traceable.
+If no single chunk fully answers the question, the system should still return what it found with clear citations, and explicitly tell the user which part of the question it couldn't fully answer. In the prompt I'd instruct the LLM: "If the context only partially answers the question, answer what you can and clearly state what information is missing." This is better than either hallucinating a complete answer or refusing to answer at all.
 
 ## Biggest failure mode
 
-Retrieval failure is the biggest risk. If the system misses the right chunk, the model can still produce a confident answer that is wrong or incomplete.
+Retrieval returning irrelevant chunks — the LLM then either hallucinates an answer or confidently answers from the wrong context. This is the silent killer because it looks like the system is working but it's producing wrong answers with no error thrown.
 
 ## Mitigation
 
-I mitigate this with hybrid retrieval, reranking, query expansion, metadata filters, and careful chunking. I also track retrieval metrics (Recall@K, MRR) and log top results to audit whether the system is actually surfacing the correct evidence. If recall drops, I retune chunk sizes, embeddings, or reranker thresholds.
+The main fix is a relevance score threshold — if the top retrieved chunk scores below a set confidence level after reranking, the system returns "I don't have enough information to answer this reliably" instead of passing low-quality context to the LLM. Beyond that, I'd log every retrieval decision with scores so I can audit and tune the threshold over time. Tracking Recall@K and MRR on a test query set helps catch drift early before it affects users.
