@@ -1,8 +1,5 @@
 # Enterprise RAG Document Q&A System 🚀
 
-Production-grade Retrieval-Augmented Generation (RAG) system for enterprise knowledge across PDFs, DOCX, Confluence/wiki pages, and plain text files. The system combines hybrid retrieval (dense + BM25), cross-encoder reranking, and NVIDIA AI Foundation Models for grounded answers with citations.
-# Enterprise RAG Document Q&A System 🚀
-
 A production-grade RAG system for enterprise knowledge across PDFs, DOCX, Confluence/wiki pages, and TXT files. It combines hybrid retrieval (dense + BM25), cross-encoder reranking, and NVIDIA AI Foundation Models for grounded answers with citations.
 
 ## Table of Contents 📚
